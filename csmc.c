@@ -7,8 +7,8 @@
 #include <pthread.h>
 #include <sys/time.h>
 
-#define PROGRAMMING_PERIOD 0.002
-#define TUTORING_PERIOD 0.2
+#define PROGRAMMING_PERIOD 3
+#define TUTORING_PERIOD 12
 
 struct student_t {
   int priority;
@@ -22,9 +22,10 @@ struct node_t {
   struct node_t* next;
 };
 
-int num_students, num_tutors, num_chairs, num_help, student_at_desk;
-int empty_chairs, in_session, num_session, num_requests;
-struct node_t* queue = NULL;
+int num_students, num_tutors, num_chairs, num_help;
+int empty_chairs, num_waiting, in_session, num_session, num_requests;
+struct node_t* waiting_line = NULL;
+struct node_t* priority_line = NULL;
 struct student_t *students;
 pthread_mutex_t warea, tarea, csmc;
 sem_t student_need_help, students_waiting_tutors, tutors_waiting_students;
@@ -39,23 +40,33 @@ now()
 
 
 int 
-higher_priority(int sid1, int sid2) {
-  int diff = students[sid1].priority - students[sid2].priority;
+higher_priority(int s1, int s2) {
+  int diff = students[s1].priority - students[s2].priority;
   if (diff == 0)
-    diff = students[sid1].time - students[sid2].time;
+    diff = students[s1].time - students[s2].time;
   return diff < 0;
 }
 
 void 
-push(int id) {
+show(struct node_t *queue) {
+  struct node_t *temp = queue;
+  while (temp) {
+    printf("%d,", temp->id);
+    temp = temp->next;
+  }
+  printf("\n");
+}
+
+void 
+priority_push(int id) {
   struct node_t *node = malloc(sizeof(struct node_t));
   node->id = id;
-  if (queue) {
-    if (higher_priority(id, queue->id)) {
-      node->next = queue;
-      queue = node;
+  if (priority_line) {
+    if (higher_priority(id, priority_line->id)) {
+      node->next = priority_line;
+      priority_line = node;
     } else {
-      for (struct node_t *second, *first = queue; first; first = first->next) {
+      for (struct node_t *second, *first = priority_line; first; first = first->next) {
         second = first->next;
         if (!second || higher_priority(id, second->id)) {
           node->next = second;
@@ -65,17 +76,43 @@ push(int id) {
       }
     }
   } else {
-    node->next = queue;
-    queue = node;
+    priority_line = node;
+  }
+}
+
+void 
+push(int id) {
+  struct node_t *node = malloc(sizeof(struct node_t));
+  node->id = id;
+  if (waiting_line) {
+    struct node_t *queue = waiting_line;
+    while (queue->next)
+      queue = queue->next;
+    queue->next = node;
+  } else {
+    waiting_line = node;
   }
 }
 
 int 
-pop() {
-  if (!queue)
+priority_pop() {
+  if (!priority_line)
     return -1;
-  int result = queue->id;
-  queue = queue->next;
+  int result = priority_line->id;
+  struct node_t *temp = priority_line;
+  priority_line = priority_line->next;
+  free(temp);
+  return result;
+}
+
+int 
+pop() {
+  if (!waiting_line)
+    return -1;
+  int result = waiting_line->id;
+  struct node_t *temp = waiting_line;
+  waiting_line = waiting_line->next;
+  free(temp);
   return result;
 }
 
@@ -86,8 +123,8 @@ student(void *id) {
   int period;
   while (h != 0) {
     // programming phase of student
-    period = (rand() % (int)(PROGRAMMING_PERIOD * 1000 + 1)) * 1000;
-    sleep(period);
+    period = (rand() % (int)(PROGRAMMING_PERIOD * 1000)) * 1000;
+    sleep(PROGRAMMING_PERIOD);
 
     // visit csmc for help
     pthread_mutex_lock(&warea);
@@ -103,7 +140,7 @@ student(void *id) {
 
     // take an empty chair and wait for tutor
     empty_chairs--;
-    student_at_desk = sid;
+    push(sid);
     printf("S: Student %d takes a seat. Empty chairs = %d.\n", sid, empty_chairs);
     pthread_mutex_unlock(&warea);
 
@@ -126,7 +163,7 @@ student(void *id) {
 
 void*
 coordinator(void *args) {
-
+  int at_desk;
   while (1) {
     pthread_mutex_lock(&csmc);
     if (num_students == 0) {
@@ -134,15 +171,20 @@ coordinator(void *args) {
       break;
     }
     pthread_mutex_unlock(&csmc);
+
     // wait for student with semaphore
     sem_wait(&student_need_help);
 
     // add student to queue
     pthread_mutex_lock(&warea);
     // use a linked list to create a queue -> insert by priority
-    push(student_at_desk);
-    num_requests++;
-    printf("C: Student %d with priority %d added to the queue. Waiting students now = %d. Total requests = %d.\n", student_at_desk, students[student_at_desk].priority, num_chairs - empty_chairs, num_requests);
+    while (waiting_line) {
+      at_desk = pop();
+      priority_push(at_desk);
+      num_requests++;
+      num_waiting++;
+      printf("C: Student %d with priority %d added to the queue. Waiting students now = %d. Total requests = %d.\n", at_desk, students[at_desk].priority, num_waiting, num_requests);
+    }
     pthread_mutex_unlock(&warea);
 
     // wait for idle tutor 
@@ -150,8 +192,6 @@ coordinator(void *args) {
 
     // notify the tutor
     sem_post(&students_waiting_tutors);
-
-
   }
   return NULL;
 }
@@ -178,7 +218,8 @@ tutor(void *id) {
     // find student with highest priority needing help
     int sid;
     pthread_mutex_lock(&warea);
-    sid = pop();
+    sid = priority_pop();
+    num_waiting--;
     empty_chairs++;
     pthread_mutex_unlock(&warea);
 
@@ -189,14 +230,14 @@ tutor(void *id) {
 
     // help the student and release him
     students[sid].tutor = tid;
-    period = (rand() % (int)(TUTORING_PERIOD * 1000 + 1)) * 1000;
-    sleep(period);
+    period = (rand() % (int)(TUTORING_PERIOD * 1000)) * 1000;
+    sleep(TUTORING_PERIOD);
     sem_post(&students[sid].being_tutored);
 
     pthread_mutex_lock(&tarea);
     in_session--;
     num_session++;
-    printf("Student %d tutored by Tutor %d. Students tutored now = %d. Total sessions tutored = %d.\n", sid, tid, in_session, num_session);
+    printf("T: Student %d tutored by Tutor %d. Students tutored now = %d. Total sessions tutored = %d.\n", sid, tid, in_session, num_session);
     pthread_mutex_unlock(&tarea);
 
   }
@@ -214,14 +255,15 @@ main(int argc, char* argv[]) {
   int i;
   void* value;
 
-  num_students = atoi(argv[0]);
-  num_tutors = atoi(argv[1]);
-  num_chairs = atoi(argv[2]);
-  num_help = atoi(argv[3]);
+  num_students = atoi(argv[1]);
+  num_tutors = atoi(argv[2]);
+  num_chairs = atoi(argv[3]);
+  num_help = atoi(argv[4]);
   
   empty_chairs = num_chairs;
   assert(pthread_mutex_init(&csmc, NULL) == 0);
   assert(pthread_mutex_init(&warea, NULL) == 0);
+  assert(pthread_mutex_init(&tarea, NULL) == 0);
 
   sem_init(&student_need_help, 0, 0);
   sem_init(&students_waiting_tutors, 0, 0);
