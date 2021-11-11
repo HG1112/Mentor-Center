@@ -7,8 +7,8 @@
 #include <pthread.h>
 #include <sys/time.h>
 
-#define PROGRAMMING_PERIOD 0.2
-#define TUTORING_PERIOD 0.002
+#define PROGRAMMING_PERIOD 2E-3
+#define TUTORING_PERIOD 2E-4
 
 struct student_t {
   int priority;
@@ -61,6 +61,7 @@ void
 priority_push(int id) {
   struct node_t *node = malloc(sizeof(struct node_t));
   node->id = id;
+  node->next = NULL;
   if (priority_line) {
     if (higher_priority(id, priority_line->id)) {
       node->next = priority_line;
@@ -84,6 +85,7 @@ void
 push(int id) {
   struct node_t *node = malloc(sizeof(struct node_t));
   node->id = id;
+  node->next = NULL;
   if (waiting_line) {
     struct node_t *queue = waiting_line;
     while (queue->next)
@@ -187,23 +189,19 @@ coordinator(void *args) {
     }
 
     // use a linked list to create a queue -> insert by priority
-    while (waiting_line) {
-      at_desk = pop();
+    for (at_desk = pop(); at_desk != -1; at_desk = pop()) {
       priority_push(at_desk);
       num_requests++;
       num_waiting++;
       printf("C: Student %d with priority %d added to the queue. Waiting students now = %d. Total requests = %d.\n", at_desk, students[at_desk].priority, num_waiting, num_requests);
+
+      // notify the tutor
+      sem_post(&coordinator_tutor);
     }
+
     pthread_mutex_unlock(&warea);
 
-    // wait for idle tutor 
-    sem_wait(&tutor_coordinator);
-
-    // notify the tutor
-    sem_post(&coordinator_tutor);
   }
-
-  printf("Coordinator done\n");
 
   return NULL;
 }
@@ -220,9 +218,6 @@ tutor(void *id) {
       break;
     }
     pthread_mutex_unlock(&csmc);
-
-    // let coordinator know tutor is free
-    sem_post(&tutor_coordinator);
 
     // wait for coordinator
     sem_wait(&coordinator_tutor);
@@ -243,6 +238,7 @@ tutor(void *id) {
     // start session between student and tutor
     pthread_mutex_lock(&tarea);
     in_session++;
+    num_session++;
     pthread_mutex_unlock(&tarea);
 
     // help the student and release him
@@ -252,14 +248,11 @@ tutor(void *id) {
     sem_post(&students[sid].being_tutored);
 
     pthread_mutex_lock(&tarea);
-    in_session--;
-    num_session++;
     printf("T: Student %d tutored by Tutor %d. Students tutored now = %d. Total sessions tutored = %d.\n", sid, tid, in_session, num_session);
+    in_session--;
     pthread_mutex_unlock(&tarea);
 
   }
-
-  printf("T: Tutor %d done\n", tid);
 
   return NULL;
 }
