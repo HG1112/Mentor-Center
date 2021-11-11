@@ -7,8 +7,8 @@
 #include <pthread.h>
 #include <sys/time.h>
 
-#define PROGRAMMING_PERIOD 3
-#define TUTORING_PERIOD 12
+#define PROGRAMMING_PERIOD 0.2
+#define TUTORING_PERIOD 0.002
 
 struct student_t {
   int priority;
@@ -28,7 +28,7 @@ struct node_t* waiting_line = NULL;
 struct node_t* priority_line = NULL;
 struct student_t *students;
 pthread_mutex_t warea, tarea, csmc;
-sem_t student_need_help, students_waiting_tutors, tutors_waiting_students;
+sem_t student_coordinator, coordinator_tutor, tutor_coordinator;
 
 int
 now()
@@ -120,10 +120,8 @@ void*
 student(void *id) {
   int sid = *((int*) id);
   int h = num_help;
-  int period;
   while (h != 0) {
     // programming phase of student
-    period = (rand() % (int)(PROGRAMMING_PERIOD * 1000)) * 1000;
     sleep(PROGRAMMING_PERIOD);
 
     // visit csmc for help
@@ -145,7 +143,7 @@ student(void *id) {
     pthread_mutex_unlock(&warea);
 
     // notify coordinator using semaphore
-    sem_post(&student_need_help);
+    sem_post(&student_coordinator);
 
     // sleep for tutoring phase
     sem_wait(&students[sid].being_tutored);
@@ -156,6 +154,7 @@ student(void *id) {
 
   pthread_mutex_lock(&csmc);
   num_students--;
+  sem_post(&student_coordinator);
   pthread_mutex_unlock(&csmc);
 
   return NULL;
@@ -164,19 +163,29 @@ student(void *id) {
 void*
 coordinator(void *args) {
   int at_desk;
-  while (1) {
+  while (1) { 
     pthread_mutex_lock(&csmc);
     if (num_students == 0) {
       pthread_mutex_unlock(&csmc);
+      int t;
+      for (t= 0 ;t < num_tutors;t++)
+        sem_post(&coordinator_tutor);
       break;
     }
     pthread_mutex_unlock(&csmc);
 
     // wait for student with semaphore
-    sem_wait(&student_need_help);
+    sem_wait(&student_coordinator);
 
     // add student to queue
     pthread_mutex_lock(&warea);
+
+    // continue if no students waiting for help
+    if (!waiting_line) {
+      pthread_mutex_unlock(&warea);
+      continue;
+    }
+
     // use a linked list to create a queue -> insert by priority
     while (waiting_line) {
       at_desk = pop();
@@ -188,18 +197,21 @@ coordinator(void *args) {
     pthread_mutex_unlock(&warea);
 
     // wait for idle tutor 
-    sem_wait(&tutors_waiting_students);
+    sem_wait(&tutor_coordinator);
 
     // notify the tutor
-    sem_post(&students_waiting_tutors);
+    sem_post(&coordinator_tutor);
   }
+
+  printf("Coordinator done\n");
+
   return NULL;
 }
 
 void*
 tutor(void *id) {
   int tid = *((int*) id);
-  int period;
+  /* int period; */
 
   while (1) {
     pthread_mutex_lock(&csmc);
@@ -210,15 +222,20 @@ tutor(void *id) {
     pthread_mutex_unlock(&csmc);
 
     // let coordinator know tutor is free
-    sem_post(&tutors_waiting_students);
+    sem_post(&tutor_coordinator);
 
     // wait for coordinator
-    sem_wait(&students_waiting_tutors);
+    sem_wait(&coordinator_tutor);
 
     // find student with highest priority needing help
     int sid;
     pthread_mutex_lock(&warea);
     sid = priority_pop();
+    if (sid == -1)
+    {
+      pthread_mutex_unlock(&warea);
+      continue;
+    }
     num_waiting--;
     empty_chairs++;
     pthread_mutex_unlock(&warea);
@@ -230,7 +247,7 @@ tutor(void *id) {
 
     // help the student and release him
     students[sid].tutor = tid;
-    period = (rand() % (int)(TUTORING_PERIOD * 1000)) * 1000;
+    /* period = (rand() % (int)(TUTORING_PERIOD * 1000)) * 1000; */
     sleep(TUTORING_PERIOD);
     sem_post(&students[sid].being_tutored);
 
@@ -241,6 +258,9 @@ tutor(void *id) {
     pthread_mutex_unlock(&tarea);
 
   }
+
+  printf("T: Tutor %d done\n", tid);
+
   return NULL;
 }
 
@@ -265,23 +285,27 @@ main(int argc, char* argv[]) {
   assert(pthread_mutex_init(&warea, NULL) == 0);
   assert(pthread_mutex_init(&tarea, NULL) == 0);
 
-  sem_init(&student_need_help, 0, 0);
-  sem_init(&students_waiting_tutors, 0, 0);
-  sem_init(&tutors_waiting_students, 0, 0);
+  sem_init(&student_coordinator, 0, 0);
+  sem_init(&coordinator_tutor, 0, 0);
+  sem_init(&tutor_coordinator, 0, 0);
 
   pthread_t coordinator_thread;
   assert(pthread_create(&coordinator_thread, NULL, coordinator, NULL) == 0);
 
+  int *tutor_id = malloc(sizeof(int) * num_tutors);
   pthread_t *tutor_threads = malloc(sizeof(pthread_t) * num_tutors);
   for(i = 0; i < num_tutors; i++) {
-    assert(pthread_create(&tutor_threads[i], NULL, tutor, (void *) &i) == 0);
+    tutor_id[i] = i;
+    assert(pthread_create(&tutor_threads[i], NULL, tutor, (void *) &tutor_id[i]) == 0);
   }
 
+  int *student_id = malloc(sizeof(int) * num_students);
   students = malloc(sizeof(struct student_t) * num_students);
   pthread_t *student_threads = malloc(sizeof(pthread_t) * num_students);
   for(i = 0; i < num_students; i++) {
+    student_id[i] = i;
     sem_init(&students[i].being_tutored, 0, 0);
-    assert(pthread_create(&student_threads[i], NULL, student, (void *) &i) == 0);
+    assert(pthread_create(&student_threads[i], NULL, student, (void *) &student_id[i]) == 0);
   }
 
   assert(pthread_join(coordinator_thread, &value) == 0);
