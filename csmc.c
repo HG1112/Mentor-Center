@@ -274,12 +274,12 @@ main(int argc, char* argv[]) {
   num_help = atoi(argv[4]);
   
   if(num_tutors <= 0){
-     printf("Number of tutors should be greater than 0");
+     printf("Number of tutors should be greater than 0 \n");
      return -1;
   }
   
   if(num_chairs <= 0){
-     printf("Number of chairs should be greater than 0");
+     printf("Number of chairs should be greater than 0 \n");
      return -1;
   }
   
