@@ -17,6 +17,7 @@ struct student_t {
   sem_t being_tutored;
 };
 
+// Using Linked list to store the priority of the students
 struct node_t {
   int id;
   struct node_t* next;
@@ -38,7 +39,7 @@ now()
  return tv.tv_sec + tv.tv_usec;
 }
 
-
+//Inserting the node based on priorities
 int 
 higher_priority(int s1, int s2) {
   int diff = students[s1].priority - students[s2].priority;
