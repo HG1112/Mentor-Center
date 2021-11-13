@@ -273,6 +273,16 @@ main(int argc, char* argv[]) {
   num_chairs = atoi(argv[3]);
   num_help = atoi(argv[4]);
   
+  if(num_tutors <= 0){
+     printf("Number of tutors should be greater than 0");
+     return -1;
+  }
+  
+  if(num_chairs <= 0){
+     printf("Number of chairs should be greater than 0");
+     return -1;
+  }
+  
   empty_chairs = num_chairs;
   assert(pthread_mutex_init(&csmc, NULL) == 0);
   assert(pthread_mutex_init(&warea, NULL) == 0);
@@ -282,10 +292,12 @@ main(int argc, char* argv[]) {
   sem_init(&coordinator_tutor, 0, 0);
   sem_init(&tutor_coordinator, 0, 0);
 
+  // Creating only one coordinator thread because one coordinator is sufficient
   pthread_t coordinator_thread;
   assert(pthread_create(&coordinator_thread, NULL, coordinator, NULL) == 0);
 
   int *tutor_id = malloc(sizeof(int) * num_tutors);
+  //Creating tutor and student threads according to the numbers given in input
   pthread_t *tutor_threads = malloc(sizeof(pthread_t) * num_tutors);
   for(i = 0; i < num_tutors; i++) {
     tutor_id[i] = i;
