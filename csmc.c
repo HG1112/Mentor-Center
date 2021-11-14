@@ -1,3 +1,7 @@
+#define _BSD_SOURCE
+#define _XOPEN_SOURCE   600
+#define _POSIX_C_SOURCE 200112L
+
 #include <stdlib.h>
 #include <stdbool.h>
 #include <semaphore.h>
@@ -6,9 +10,11 @@
 #include <assert.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #define PROGRAMMING_PERIOD 2E-3
 #define TUTORING_PERIOD 2E-4
+
 
 struct student_t {
   int priority;
@@ -123,9 +129,17 @@ void*
 student(void *id) {
   int sid = *((int*) id);
   int h = num_help;
+  srand(263);
+  // value beteween 0 to 2000
+  int randValue = (rand() % (2000 - 0 + 1)) ;
+
+  
+   
+
   while (h != 0) {
     // programming phase of student
-    sleep(PROGRAMMING_PERIOD);
+    //sleep(PROGRAMMING_PERIOD);
+    usleep(randValue);
 
     // visit csmc for help
     pthread_mutex_lock(&warea);
